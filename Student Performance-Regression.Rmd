@@ -1,0 +1,343 @@
+---
+title: "Final Project--Regression"
+author: "Xin Wang"
+date: "December 7, 2016"
+output: 
+  html_document: 
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Step 1: Identify a good research question
+Proposed Hypothesis: G3(dependent variable) is affected by some or all other independent variables in the data set
+
+Why G3:
+
+1. G3 is the final grade, it is less sensitive on data collection timing issue than G1 and G2, since some of the data could be collected after G1, G2, complicating the casual effect. Choosing G3 as dependent variable can mitigate the problem, since the variables with potential timing problems would be independent from other possible dependent variables (such as G1 or G2) in that case. 
+
+2. G3 is close to normal distribution (except some outliers) which is ideal for regression analysis.
+
+### Step 2: Identify the data that help answer that question
+
+Math and Language data sets
+
+1. run regression on Math data
+
+2. run classification on Language data
+
+### Step 3: Obtain and read in data
+### Step 4: Clean the data. Use the proper delimit, dealing with the missing data, treat the incorrect data class/type.
+
+```{r}
+# Set working directory
+setwd("C:/Users/admin/Downloads/R projects/Final Project")
+require(readr)
+require(ISLR)
+require(ggplot2)
+require(GGally)
+require(caret)
+require(MASS)
+require(klaR)
+require(glmnet)
+require(class)
+require(earth)
+```
+
+Read in data
+
+```{r}
+MathData <- read_delim("sm.csv", delim = ";")
+# test if has missing data
+table(is.na(MathData))
+MathData <- as.data.frame(MathData)
+# no missing value
+```
+
+### Step 5: Get to know the data with summarize and visualization tools
+
+```{r}
+attach(MathData)
+
+summary(MathData)
+
+charName <- names(MathData) %in% c("school", "sex", "address", "famsize", "Pstatus", "Mjob", "Fjob", "reason", "guardian", "schoolsup", "famsup", "paid", "activities", "nursery", "higher", "internet", "romantic")
+charData <- MathData[charName]
+numData <- MathData[!charName]
+
+# plots for Character Variables
+mainnames <- names(charData)
+par(mfrow=c(3, 3))
+for (i in 1:9){
+    barplot(table(charData[,i]), main=mainnames[i], col = "#33cccc", border = NA)
+}
+par(mfrow=c(3, 3))
+for (i in 10:17){
+    barplot(table(charData[,i]), main=mainnames[i], col = "#33cccc", border = NA)
+}
+
+# plots for Numeric Variables
+mainnames1 <- names(numData)
+par(mfrow=c(3, 3))
+for (i in 1:9){
+    barplot(table(numData[,i]), main=mainnames1[i], col = "#33cccc", border = NA)
+}
+par(mfrow=c(3, 3))
+for (i in 10:16){
+    barplot(table(numData[,i]), main=mainnames1[i], col = "#33cccc", border = NA)
+}
+
+# correlation
+ggcorr(numData, label = TRUE, legend.position = "none")
+```
+
+### Step 6: Treat Existing variables / Create new variables
+
+Treat G1, G2, G3
+
+```{r}
+# compare G1, G2, G3
+G123 <- data.frame(G1=numData$G1, G2=numData$G2, G3=numData$G3)
+par(mfrow=c(2, 2))
+for (i in 1:3) {
+    hist(G123[,i], main=names(G123)[i], probability=TRUE, breaks=20, col="#33cccc", border="white", xlab=NA)
+    d <- density(G123[,i])
+    lines(d, col="red")
+}
+# G3 is likely to be harder than G2 and G1 since the skewness shift towards left(lower grades) from G1, G2 to G3.
+# there are also many 0 scores indicating they might be outliers.
+
+# inspect the data to see if those scored 0 also scored low on G1, G2
+inspect0score <- subset(numData, subset = G3==0, select = c(G1, G2, G3, absences, studytime))
+par(mfrow=c(2, 3))
+for (i in 1:5) {
+    barplot(table(inspect0score[,i]), main=names(inspect0score)[i], col="#33cccc", border=NA, xlab=NA)
+}
+mean(inspect0score$studytime)
+# those students have 0 absence
+# they score relatively low on G1, too many of them scored 0 on G2
+# their average study time is around level 2
+
+# check if those scored 0 on both G2 and G3 study less time
+lapply(subset(numData, subset = G3==0 & G2==0, select = c(G1, G2, G3, absences, studytime)), 
+       function(x) mean(x))
+# these student did not score too low on G1 and their average study time is fair
+# therefore, it is possible that they missed the exams, it may be helpful if remove these outliers
+
+# remove potential outliers
+MathData <- subset(numData, subset = !(G3==0 & G2==0))
+```
+
+Treat Alcohol Consumption variables
+```{r}
+# since Dalc and Walc are highly correlated and Dalc is quite skewed and they both describe the same thing,
+# combine them into one varible
+Math <- subset(MathData, select = -c(Dalc, Walc))
+Math$Alc <- MathData$Dalc + MathData$Walc
+```
+
+### Step 7: Develop a modeling plan: which algorithms would be more likely to produce ideal results
+
+preliminary correlation testing on different predictor combinations
+
+```{r}
+# 1 
+summary(lm(formula = G3 ~ ., data = Math))
+# age, famrel, absences, G2 are significant
+# 2
+summary(lm(formula = G3 ~ .-G2, data = Math))
+# age, famrel, G1 are significant, age and G1 become highly influential factors
+# 3
+summary(lm(formula = G3 ~ .-G1, data = Math))
+# famrel, absences, G2 are significant
+# 4
+summary(lm(formula = G3 ~ .-G1-G2, data = Math))
+# Medu, failures become significant, R2 is very low compare to other formulae
+# 5
+summary(lm(formula = G3 ~ famrel + absences + G2, data = Math))
+# all significant
+# 6
+summary(lm(formula = G3 ~ famrel + absences + G2 + age + failures, data = Math))
+# age and failures become less important
+
+# in following process, formula 1,2,3,5 will be adopted
+```
+
+### Step 8: Split the data into a training set and a test set.
+
+```{r}
+set.seed(1234)
+intrain <- as.integer(createDataPartition(y = Math$G1, p = 0.8, list = FALSE))
+training <- Math[intrain, ]
+testing <- Math[-intrain, ]
+```
+
+### Step 9: performing resampling to identify which predictor/parameter combinations could produce best results.
+
+```{r}
+# shared elements
+outcomeVar <- 'G3'
+trainingDV <- training[, outcomeVar]
+preParam <- c("center", "scale", "nzv")
+seed <- 567
+train_control <- trainControl(method='cv', number= 10, returnResamp='none')
+```
+
+```{r}
+# functions for all regression models
+lmTrain <- function(xvars){
+    set.seed(seed)
+    train(x = xvars, 
+          y = trainingDV,
+          method = "lm",
+          preProc = preParam,
+          trControl = train_control)
+}
+
+plsTrain <- function(xvars){
+    set.seed(seed)
+    train(x = xvars, 
+          y = trainingDV,
+          method = "pls",
+          preProc = preParam,
+          trControl = train_control)
+}
+
+marsTrain <- function(xvars){
+    set.seed(seed)
+    train(x = xvars, 
+          y = trainingDV,
+          method = "earth",
+          preProc = preParam,
+          trControl = train_control)
+}
+
+knnTrain <- function(xvars){
+    set.seed(seed)
+    train(x = xvars, 
+          y = trainingDV,
+          method = "knn",
+          preProc = preParam,
+          trControl = train_control)
+}
+
+ridgeTrain <- function(xvars){
+    set.seed(seed)
+    train(x = xvars, 
+          y = trainingDV,
+          method = "ridge",
+          preProc = preParam,
+          trControl = train_control)
+}
+```
+
+```{r}
+# build baseline model
+
+# 10 fold cross validation
+testData <- vector("list", 10)
+heldoutData <- vector("list", 10)
+residlist <- vector("list", 10)
+held_out <- cut(seq(1, nrow(training)), breaks = 10, labels = FALSE)
+for(i in 1:10) {
+  testIndexes <- which(held_out == i)
+  testData[[i]] <- mean(training[-testIndexes, ]$G3)
+  heldoutData[[i]] <- mean(training[testIndexes, ]$G3)
+  residlist[[i]] <- abs(testData[[i]] - heldoutData[[i]])
+}
+min(do.call(rbind, residlist))
+# the smallest is [5,] 0.06463301
+baselineTrain <- testData[[5]]
+
+# calculate RSS
+calRSS <- function(predictDV){
+    sum((as.double(testing[, outcomeVar]) - predictDV)^2)
+}
+
+baseRSS <- calRSS(baselineTrain)
+
+testAccu <- function(lm, pls, mars, knn, ridge, predictors){    
+    modelList <- list(lm, pls, mars, knn, ridge)
+    names(modelList) <- c("lm", "pls", "mars", "knn", "ridge")
+    # predict on test data
+    predictList <- lapply(modelList, function(x) as.double(predict(x, testing[, predictors])))
+    rssList <- lapply(predictList, function(x) calRSS(x))
+    rssList[["baseline"]] <- baseRSS
+    names(rssList) <- c("LM", "PLS", "MARS", "KNN", "RIDGE", "Baseline")
+    do.call(rbind, rssList)
+}
+```
+
+### Step 10: Run the predictive models.
+
+```{r}
+# formula = G3 ~ .
+predictors1 <- names(subset(Math, select = -G3))
+xvars1 <- training[, predictors1]
+lmFinal1 <- lmTrain(xvars1)
+plsFinal1 <- plsTrain(xvars1)
+marsFinal1 <- marsTrain(xvars1)
+knnFinal1 <- knnTrain(xvars1)
+ridgeFinal1 <- ridgeTrain(xvars1)
+```
+
+### Step 11: Evaluate the results of the predictive models on the test data.
+
+```{r}
+Formula1 <- testAccu(lmFinal1, plsFinal1, marsFinal1, knnFinal1, ridgeFinal1, predictors1)
+```
+
+### Step 12: Refine predictive models and repeat with different algorithms, or with more data
+
+```{r}
+# formula = G3 ~ .-G2
+predictors2 <- names(subset(Math, select = -c(G2, G3)))
+xvars2 <- training[, predictors2]
+lmFinal2 <- lmTrain(xvars2)
+plsFinal2 <- plsTrain(xvars2)
+marsFinal2 <- marsTrain(xvars2)
+knnFinal2 <- knnTrain(xvars2)
+ridgeFinal2 <- ridgeTrain(xvars2)
+
+Formula2 <- testAccu(lmFinal2, plsFinal2, marsFinal2, knnFinal2, ridgeFinal2, predictors2)
+```
+
+```{r}
+# formula = G3 ~ .-G1
+predictors3 <- names(subset(Math, select = -c(G1, G3)))
+xvars3 <- training[, predictors3]
+lmFinal3 <- lmTrain(xvars3)
+plsFinal3 <- plsTrain(xvars3)
+marsFinal3 <- marsTrain(xvars3)
+knnFinal3 <- knnTrain(xvars3)
+ridgeFinal3 <- ridgeTrain(xvars3)
+
+Formula3 <- testAccu(lmFinal3, plsFinal3, marsFinal3, knnFinal3, ridgeFinal3, predictors3)
+```
+
+```{r}
+# formula = G3 ~ famrel + absences + G2
+predictors4 <- names(subset(Math, select = c(famrel, absences, G2)))
+xvars4 <- training[, predictors4]
+lmFinal4 <- lmTrain(xvars4)
+plsFinal4 <- plsTrain(xvars4)
+marsFinal4 <- marsTrain(xvars4)
+knnFinal4 <- knnTrain(xvars4)
+ridgeFinal4 <- ridgeTrain(xvars4)
+
+Formula4 <- testAccu(lmFinal4, plsFinal4, marsFinal4, knnFinal4, ridgeFinal4, predictors4)
+```
+
+### Compare all formulae and all algorithms
+
+```{r}
+data.frame(Formula1, Formula2, Formula3, Formula4)
+# In all formulae:
+# LM performances the best, RIDGE, MARS are close, KNN is least accurate.
+# all models significantly outpeform the baseline
+# Among formulae:
+# Formula4 yeilds best overall result, followed by Formula3 since it exludes G1
+# The experiment reveals some sign that G2 is closely related, famrel and absences are also higly influential factors.
+```

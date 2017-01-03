@@ -1,0 +1,371 @@
+---
+title: "Final Project--Classification"
+author: "Xin Wang"
+date: "December 7, 2016"
+output: 
+  html_document: 
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Step 1-2: In regression problem set
+
+In this classification problem set, the process focus on predicting whether the student fail or pass the G3 exam according to the predictors.
+
+### Step 3: Obtain and read in data
+
+### Step 4: Clean the data. Use the proper delimit, dealing with the missing data, treat the incorrect data class/type
+
+```{r}
+# Set working directory
+setwd("C:/Users/admin/Downloads/R projects/Final Project")
+require(readr)
+require(ISLR)
+require(ggplot2)
+require(GGally)
+require(caret)
+require(MASS)
+require(klaR)
+require(mda)
+require(glmnet)
+require(class)
+require(randomForest)
+require(rpart)
+require(gbm)
+```
+
+Read in data
+
+```{r}
+LangData <- read_delim("sp.csv", delim = ";")
+# test if has missing data
+table(is.na(LangData))
+# no missing value
+LangData <- as.data.frame(LangData)
+```
+
+### Step 5: Get to know your data with summarize and visualization tools
+
+```{r}
+summary(LangData)
+
+charName <- names(LangData) %in% c("school", "sex", "address", "famsize", "Pstatus", "Mjob", "Fjob", "reason", "guardian", "schoolsup", "famsup", "paid", "activities", "nursery", "higher", "internet", "romantic")
+charData <- LangData[charName]
+numData <- LangData[!charName]
+
+# plots for Character Variables
+mainnames <- names(charData)
+par(mfrow=c(3, 3))
+for (i in 1:9){
+    barplot(table(charData[,i]), main=mainnames[i], col = "#33cccc", border = NA)
+}
+par(mfrow=c(3, 3))
+for (i in 10:17){
+    barplot(table(charData[,i]), main=mainnames[i], col = "#33cccc", border = NA)
+}
+
+# plots for Numeric Variables
+mainnames1 <- names(numData)
+par(mfrow=c(3, 3))
+for (i in 1:9){
+    barplot(table(numData[,i]), main=mainnames1[i], col = "#33cccc", border = NA)
+}
+par(mfrow=c(3, 3))
+for (i in 10:16){
+    barplot(table(numData[,i]), main=mainnames1[i], col = "#33cccc", border = NA)
+}
+
+# G1, G2 and G3 are close to normal distibution and there are little sign of outliers though G3 is right skewed
+# no treatment should apply on G1, G2, G3
+
+# correlation
+ggcorr(numData, label = TRUE, legend.position = "none")
+# alcohol comsumption variables are related, G1, G2, G3 are interrelated
+```
+
+### Step 6: Treat Existing variables / Create new variables
+
+### Step 7: Develop a modeling plan: which algorithms would be more likely to produce ideal results
+
+preliminary correlation testing on different predictor combinations
+
+```{r}
+LangPreTest <- LangData
+LangPreTest$Alc <- LangData$Dalc + LangData$Walc
+LangPreTest <- subset(LangPreTest, select = -c(Dalc, Walc))
+
+# 1 
+summary(lm(formula = G3 ~ ., data = LangPreTest))
+# Fjobservices, reasonother, failures, G1, G2 are significant
+
+# 2
+summary(lm(formula = G3 ~ .-G2, data = LangPreTest))
+# age, Fjobservices, reasonother, failures, health, G1 are significant
+# age and G1 become highly influential factors compare to #1
+
+# 3
+summary(lm(formula = G3 ~ .-G1, data = LangPreTest))
+# schoolMs, reasonother, failures, G2 are significant
+
+# 4
+summary(lm(formula = G3 ~ .-G1-G2, data = LangPreTest))
+# schoolMs, sexM, studytime, failures, schoolsupyes, higeryes, health, Alc become significant, 
+# R2 is very low compare to other formulae
+
+# 5 (all variables with above ** significance except G1 and G2)
+summary(lm(formula = G3 ~ failures + school + Alc + schoolsup, data = LangPreTest))
+# all significant, R2 is very low compare to other formulae
+
+# 6 
+summary(lm(formula = G3 ~ failures + school + Alc + schoolsup + G2, data = LangPreTest))
+# all but school are significant, R2 is high
+
+# 7
+summary(lm(formula = G3 ~ failures + school + Alc + G2, data = LangPreTest))
+# all significant, shcool and Alc become less important
+
+# 8
+summary(lm(formula = G3 ~ failures + school + Alc + G1 + G2, data = LangPreTest))
+# all significant, shcool and Alc become less important
+
+# according to R2 and significance level, in following process, formula 1, 3, 6, 7, 8 will be adopted
+```
+
+Treat Alcohol Consumption variables
+
+```{r}
+# since Dalc and Walc are highly correlated and Dalc is quite skewed and they both describe the same thing,
+# combine them into one varible
+Lang <- subset(numData, select = -c(Dalc, Walc))
+Lang$Alc <- LangData$Dalc + LangData$Walc
+```
+
+```{r}
+# Treat G3 as binary data
+table(Lang$G3 <= 11)
+# it split the 2 categories relatively even, so 11 is set to be the cut-off point
+# fail is the positive level
+Lang$G3 <- as.factor(ifelse(Lang$G3 <= 11, "Fail", "Pass"))
+
+# sicne the train() function only accepts numeric values, transform relevant variables:
+mean(subset(LangData, subset = school=="GP", select = c(school, G3))$G3)
+mean(subset(LangData, subset = school=="MS", select = c(school, G3))$G3)
+# GP performs better than MS, since fail is positive level, set Ms to 1
+Lang$school <- ifelse(LangData$school=="MS", 1,0)
+Lang$schoolsup <- ifelse(LangData$schoolsup=="no", 1,0)
+```
+
+### Step 8: Split the data into a training set and a test set
+
+```{r}
+set.seed(1234)
+intrain <- as.integer(createDataPartition(y = Lang$G1, p = 0.8, list = FALSE))
+training <- Lang[intrain, ]
+testing <- Lang[-intrain, ]
+```
+
+### Step 9: performing resampling to identify which predictor/parameter combinations could produce best results
+
+```{r}
+# shared elements
+trainingDV <- training[, "G3"]
+preParam <- c("center", "scale", "nzv")
+seed <- 567
+train_control <- trainControl(method='cv', number= 4, returnResamp='none')
+```
+
+```{r}
+# functions for all regression models
+# default metric for choosing best parameters is Accuracy
+# alternatives are Kappa, ROC
+# ROC metric only work for 2-class problems
+# Kappa is helpful for data sets where there is a large imbalance between the classes
+
+glmTrain <- function(xvars){
+    set.seed(seed)
+    train(x = xvars, 
+          y = trainingDV,
+          method = "glmnet",
+          preProc = preParam,
+          trControl = train_control)
+}
+
+ldaTrain <- function(xvars){
+    set.seed(seed)
+    train(x = xvars, 
+          y = trainingDV,
+          method = "lda2",
+          preProc = preParam,
+          trControl = train_control)
+}
+
+mdaTrain <- function(xvars){
+    set.seed(seed)
+    train(x = xvars, 
+          y = trainingDV,
+          method = "mda",
+          preProc = preParam,
+          trControl = train_control)
+}
+
+rfTrain <- function(xvars){
+    set.seed(seed)
+    train(x = xvars, 
+          y = trainingDV,
+          method = "rf",
+          preProc = preParam,
+          trControl = train_control)
+}
+
+pdaTrain <- function(xvars){
+    set.seed(seed)
+    train(x = xvars, 
+          y = trainingDV,
+          method = "pda",
+          preProc = preParam,
+          trControl = train_control)
+}
+
+rpartTrain <- function(xvars){
+    set.seed(seed)
+    train(x = xvars, 
+          y = trainingDV,
+          method = "rpart",
+          preProc = preParam,
+          trControl = train_control)
+}
+
+gbmTrain <- function(xvars){
+    set.seed(seed)
+    train(x = xvars, 
+          y = trainingDV,
+          method = "gbm",
+          preProc = preParam,
+          trControl = train_control)
+}
+```
+
+```{r}
+modelAccu <- function(glm, lda, mda, pda, rf, rpart, predictors){    
+    # predict on test data
+    modelList <- list(GLM = glm, LDA = lda, MDA = mda, PDA = pda, RF = rf, RPART = rpart)
+    testList <- lapply(modelList, function(x) predict(x, testing[, predictors]))
+    
+    # confusion matrix
+    MatList <- lapply(testList, function(x) confusionMatrix(x, testing[, "G3"]))
+    
+    # evaluation metrics
+    accuList <- lapply(MatList, function(x) x$overall[c("Accuracy", "AccuracyNull")])
+    rtList <- lapply(MatList, function(x) x$byClass[c(1,2,5,11,7)])
+    names(accuList) <- names(MatList)
+    data.frame(do.call(rbind, accuList), do.call(rbind, rtList)) 
+}
+```
+
+### Step 10: Run the predictive models
+
+```{r}
+# formula = G3 ~ .
+predictors1 <- names(subset(Lang, select = -G3))
+xvars1 <- training[, predictors1]
+glmFinal1 <- glmTrain(xvars1)
+ldaFinal1 <- ldaTrain(xvars1)
+mdaFinal1 <- mdaTrain(xvars1)
+pdaFinal1 <- pdaTrain(xvars1)
+rfFinal1 <- rfTrain(xvars1)
+rpartFinal1 <- rpartTrain(xvars1)
+```
+
+### Step 11: Evaluate the results of the predictive models on the test data
+
+```{r}
+Formula1 <- modelAccu(glmFinal1, ldaFinal1, mdaFinal1, pdaFinal1, rfFinal1, rpartFinal1, predictors1)
+```
+
+### Step 12: Refine predictive models and repeat with different algorithms, or with more data
+
+```{r}
+# formula = G3 ~ .-G1
+predictors2 <- names(subset(Lang, select = -c(G1,G3)))
+xvars2 <- training[, predictors2]
+glmFinal2 <- glmTrain(xvars2)
+ldaFinal2 <- ldaTrain(xvars2)
+mdaFinal2 <- mdaTrain(xvars2)
+pdaFinal2 <- pdaTrain(xvars2)
+rfFinal2 <- rfTrain(xvars2)
+rpartFinal2 <- rpartTrain(xvars2)
+
+Formula2 <- modelAccu(glmFinal2, ldaFinal2, mdaFinal2, pdaFinal2, rfFinal2, rpartFinal2, predictors2)
+```
+
+```{r}
+# formula = G3 ~ failures + school + Alc + schoolsup + G2
+predictors3 <- names(subset(Lang, select = c(failures, school, Alc, schoolsup, G2)))
+xvars3 <- training[, predictors3]
+glmFinal3 <- glmTrain(xvars3)
+ldaFinal3 <- ldaTrain(xvars3)
+mdaFinal3 <- mdaTrain(xvars3)
+pdaFinal3 <- pdaTrain(xvars3)
+rfFinal3 <- rfTrain(xvars3)
+rpartFinal3 <- rpartTrain(xvars3)
+
+Formula3 <- modelAccu(glmFinal3, ldaFinal3, mdaFinal3, pdaFinal3, rfFinal3, rpartFinal3, predictors3)
+```
+
+```{r}
+# formula = G3 ~ failures + school + Alc + G2
+predictors4 <- names(subset(Lang, select = c(failures, school, Alc, G2)))
+xvars4 <- training[, predictors4]
+glmFinal4 <- glmTrain(xvars4)
+ldaFinal4 <- ldaTrain(xvars4)
+mdaFinal4 <- mdaTrain(xvars4)
+pdaFinal4 <- pdaTrain(xvars4)
+rfFinal4 <- rfTrain(xvars4)
+rpartFinal4 <- rpartTrain(xvars4)
+
+Formula4 <- modelAccu(glmFinal4, ldaFinal4, mdaFinal4, pdaFinal4, rfFinal4, rpartFinal4, predictors4)
+```
+
+```{r}
+# formula = G3 ~ failures + school + Alc + G1 + G2
+predictors5 <- names(subset(Lang, select = c(failures, school, Alc, schoolsup, G1, G2)))
+xvars5 <- training[, predictors5]
+glmFinal5 <- glmTrain(xvars5)
+ldaFinal5 <- ldaTrain(xvars5)
+mdaFinal5 <- mdaTrain(xvars5)
+pdaFinal5 <- pdaTrain(xvars5)
+rfFinal5 <- rfTrain(xvars5)
+rpartFinal5 <- rpartTrain(xvars5)
+
+Formula5 <- modelAccu(glmFinal5, ldaFinal5, mdaFinal5, pdaFinal5, rfFinal5, rpartFinal5, predictors5)
+```
+
+### Compare all formulae and all algorithms
+
+```{r}
+metricList <- list(Formula1, Formula2, Formula3, Formula4, Formula5)
+metricList
+# Precision is the number of positive predictions divided by the total number of positive class values predicted, shows how precise is the positive predictions
+# Sensitivity can be thought of as a measure of a classifiers completeness, similar to precision
+# Specificity: true negative rate, shows how precise is the positive predictions
+# F1 score conveys the balance between the precision and the sensitivity
+# the larger these metrics are, the better a model performs
+
+# all models significantly outperformed the No Information Rate(Baseline)
+
+# RF and RPART performs differently when there are a plenty of predictors,
+# they perform the same way when there are a selective numbers of predictors
+```
+
+other possible experiments:
+
+1. other variable combination
+
+2. change the cut-off point for G3
+
+3. SVM, GBM, etc.
+
+4. use ROC as the metric instead of the default Accuracy in train()
