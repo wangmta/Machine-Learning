@@ -1,7 +1,4 @@
 ---
-title: "Final Project--Regression"
-author: "Xin Wang"
-date: "December 7, 2016"
 output: 
   html_document: 
     toc: yes
